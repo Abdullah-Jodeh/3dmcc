@@ -4,6 +4,8 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Minimal self-contained server for the Docker image (deploy/dmcc/Dockerfile).
+  output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
   images: {

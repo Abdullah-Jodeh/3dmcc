@@ -1,0 +1,182 @@
+# Self-hosted Supabase for 3DMCC on the Contabo k3s server.
+# Chart: https://github.com/supabase-community/supabase-kubernetes (charts/supabase)
+# Secrets live outside the repo in ~/.config/dmcc-supabase/secrets.yaml.
+#
+# Install / upgrade:
+#   helm upgrade --install supabase <chart-dir> -n supabase-dmcc --create-namespace \
+#     --kube-context contabo-k3s \
+#     -f deploy/supabase/values.yaml -f ~/.config/dmcc-supabase/secrets.yaml
+
+image:
+  auth:
+    # Chart 0.8.0 ships v2.189.0; v2.197.0 matches Supabase Cloud's auth schema
+    # (migration 20260831180000) so cloud dumps restore without skipped tables.
+    tag: v2.197.0
+
+deployment:
+  # Not used by the app: no edge functions, no image transformations, and no
+  # Realtime subscriptions (the admin notification bell polls).
+  functions:
+    enabled: false
+  imgproxy:
+    enabled: false
+  realtime:
+    enabled: false
+  db:
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits: { memory: 1Gi }
+  auth:
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  rest:
+    resources:
+      requests: { cpu: 25m, memory: 48Mi }
+      limits: { memory: 192Mi }
+  storage:
+    resources:
+      requests: { cpu: 25m, memory: 96Mi }
+      limits: { memory: 384Mi }
+  meta:
+    resources:
+      requests: { cpu: 10m, memory: 64Mi }
+      limits: { memory: 192Mi }
+  kong:
+    resources:
+      requests: { cpu: 25m, memory: 96Mi }
+      limits: { memory: 256Mi }
+  studio:
+    resources:
+      requests: { cpu: 10m, memory: 160Mi }
+      limits: { memory: 512Mi }
+
+persistence:
+  db:
+    size: 10Gi
+  storage:
+    size: 10Gi
+  functions:
+    enabled: false
+  imgproxy:
+    enabled: false
+  deno:
+    enabled: false
+
+# Lists below replace the chart defaults entirely, so they are copied in full.
+environment:
+  auth:
+    - name: API_EXTERNAL_URL
+      value: https://supabase-dmcc.rajab.abrdns.com
+    - name: GOTRUE_API_HOST
+      value: "0.0.0.0"
+    - name: GOTRUE_API_PORT
+      value: "9999"
+    - name: GOTRUE_SITE_URL
+      value: https://dmcc.rajab.abrdns.com
+    - name: GOTRUE_URI_ALLOW_LIST
+      value: https://dmcc.rajab.abrdns.com/**,http://localhost:3000/**
+    # The app creates users via auth.admin.createUser; public sign-up is not used.
+    - name: GOTRUE_DISABLE_SIGNUP
+      value: "true"
+    - name: GOTRUE_JWT_DEFAULT_GROUP_NAME
+      value: authenticated
+    - name: GOTRUE_JWT_ADMIN_ROLES
+      value: service_role
+    - name: GOTRUE_JWT_AUD
+      value: authenticated
+    - name: GOTRUE_JWT_EXP
+      value: "3600"
+    - name: GOTRUE_EXTERNAL_EMAIL_ENABLED
+      value: "true"
+    - name: GOTRUE_MAILER_AUTOCONFIRM
+      value: "true"
+    - name: GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED
+      value: "false"
+    - name: GOTRUE_EXTERNAL_PHONE_ENABLED
+      value: "false"
+    - name: GOTRUE_SMS_AUTOCONFIRM
+      value: "false"
+    # TODO: real SMTP is needed for password-reset emails (resetPasswordForEmail).
+    - name: GOTRUE_SMTP_ADMIN_EMAIL
+      value: no-reply@dmcc.rajab.abrdns.com
+    - name: GOTRUE_SMTP_HOST
+      value: smtp.invalid
+    - name: GOTRUE_SMTP_PORT
+      value: "587"
+    - name: GOTRUE_SMTP_SENDER_NAME
+      value: 3DMCC
+    - name: GOTRUE_MAILER_URLPATHS_INVITE
+      value: "/auth/v1/verify"
+    - name: GOTRUE_MAILER_URLPATHS_CONFIRMATION
+      value: "/auth/v1/verify"
+    - name: GOTRUE_MAILER_URLPATHS_RECOVERY
+      value: "/auth/v1/verify"
+    - name: GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE
+      value: "/auth/v1/verify"
+
+  storage:
+    - name: REQUEST_ALLOW_X_FORWARDED_PATH
+      value: "true"
+    - name: FILE_SIZE_LIMIT
+      value: "52428800"
+    - name: FILE_STORAGE_BACKEND_PATH
+      value: /var/lib/storage
+    - name: TENANT_ID
+      value: stub
+    - name: REGION
+      value: stub
+    - name: GLOBAL_S3_BUCKET
+      value: stub
+    - name: ENABLE_IMAGE_TRANSFORMATION
+      value: "false"
+
+  kong:
+    - name: KONG_DATABASE
+      value: "off"
+    - name: KONG_DECLARATIVE_CONFIG
+      value: /usr/local/kong/kong.yml
+    - name: KONG_DNS_ORDER
+      value: LAST,A,CNAME
+    - name: KONG_PLUGINS
+      value: request-transformer,cors,key-auth,acl,basic-auth,post-function
+    - name: KONG_NGINX_PROXY_PROXY_BUFFER_SIZE
+      value: 160k
+    - name: KONG_NGINX_PROXY_PROXY_BUFFERS
+      value: 64 160k
+    - name: KONG_LOG_LEVEL
+      value: warn
+    # One nginx worker is plenty for a single small site (chart default: 2).
+    - name: KONG_NGINX_WORKER_PROCESSES
+      value: "1"
+
+  studio:
+    - name: HOSTNAME
+      value: "::"
+    - name: STUDIO_PORT
+      value: "3000"
+    - name: DEFAULT_ORGANIZATION_NAME
+      value: 3DMCC
+    - name: DEFAULT_PROJECT_NAME
+      value: 3DMCC
+    - name: SUPABASE_PUBLIC_URL
+      value: https://supabase-dmcc.rajab.abrdns.com
+    - name: NEXT_ANALYTICS_BACKEND_PROVIDER
+      value: postgres
+
+# Kong serves the API (/auth, /rest, /realtime, /storage) and Studio at /
+# behind basic auth (secret.dashboard).
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    - secretName: supabase-tls
+      hosts:
+        - supabase-dmcc.rajab.abrdns.com
+  hosts:
+    - host: supabase-dmcc.rajab.abrdns.com
+      paths:
+        - path: /
+          pathType: Prefix

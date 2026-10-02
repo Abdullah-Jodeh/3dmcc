@@ -1,0 +1,65 @@
+# 3DMCC app on contabo-k3s against its own self-hosted Supabase
+# (namespace supabase-dmcc, see deploy/supabase/values.yaml).
+# Env comes from secret "dmcc-env" (created with kubectl, not stored in git).
+# The image is imported straight into k3s containerd (no registry), hence imagePullPolicy: Never.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dmcc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dmcc
+  namespace: dmcc
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dmcc }
+  template:
+    metadata:
+      labels: { app: dmcc }
+    spec:
+      containers:
+        - name: app
+          image: docker.io/library/dmcc:latest
+          imagePullPolicy: Never
+          ports: [{ containerPort: 3000 }]
+          envFrom: [{ secretRef: { name: dmcc-env } }]
+          readinessProbe:
+            httpGet: { path: /robots.txt, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 160Mi }
+            limits: { memory: 768Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dmcc
+  namespace: dmcc
+spec:
+  selector: { app: dmcc }
+  ports: [{ port: 80, targetPort: 3000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dmcc
+  namespace: dmcc
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [dmcc.rajab.abrdns.com]
+      secretName: dmcc-tls
+  rules:
+    - host: dmcc.rajab.abrdns.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: dmcc, port: { number: 80 } }

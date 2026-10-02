@@ -1,0 +1,8 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+deploy
+supabase/.temp
+tsconfig.tsbuildinfo
